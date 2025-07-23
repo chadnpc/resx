@@ -45,13 +45,13 @@ class resx {
 
     # Platform detection
     static [Platform] DetectPlatform() {
-        if ($IsWindows -or $env:OS -eq "Windows_NT") {
+        if ((get-variable -name IsWindows).Value -or $env:OS -eq "Windows_NT") {
             return [Platform]::Windows
         }
-        elseif ($IsLinux) {
+        elseif ((Get-variable -name IsLinux).Value) {
             return [Platform]::Linux
         }
-        elseif ($IsMacOS) {
+        elseif ((Get-variable -Name IsMacOS).Value) {
             return [Platform]::MacOS
         }
         else {
@@ -61,20 +61,21 @@ class resx {
 
     # Get platform-appropriate log directory
     static [string] GetPlatformLogDir() {
-        switch ([resx]::DetectPlatform()) {
+        $d = switch ([resx]::DetectPlatform()) {
             "Windows" {
-                return "$env:LOCALAPPDATA\resx"
+                "$env:LOCALAPPDATA/resx"
             }
             "Linux" {
-                return "$env:HOME/.local/share/resx"
+                "$env:HOME/.local/share/resx"
             }
             "MacOS" {
-                return "$env:HOME/Library/Application Support/resx"
+                "$env:HOME/Library/Application Support/resx"
             }
             default {
-                return "$env:TEMP/resx"
+                "$env:TEMP/resx"
             }
         }
+        return $d
     }
 
     # Initialize log directory
@@ -103,36 +104,33 @@ class resx {
                 "Windows" {
                     try {
                         # Get all monitors from WMI
-                        $monitors = Get-CimInstance -ClassName Win32_DesktopMonitor -ErrorAction Stop
-                        $videoControllers = Get-CimInstance -ClassName Win32_VideoController -ErrorAction Stop
+                        $monitors = Get-CimInstance -ClassName Win32_DesktopMonitor -ea Stop
+                        $videoControllers = Get-CimInstance -ClassName Win32_VideoController -ea Stop
 
-                        $connectedDisplays = @()
-                        $disconnectedDisplays = @()
+                        $this.connectedDisplays = @()
+                        $this.disconnectedDisplays = @()
 
                         foreach ($controller in $videoControllers) {
                             if ($controller.Name -and $controller.Name -ne "Microsoft Basic Display Adapter") {
                                 if ($controller.Availability -eq 3) { # Available/enabled
-                                    $connectedDisplays += $controller.Name
+                                    $this.connectedDisplays += $controller.Name
                                 } else {
-                                    $disconnectedDisplays += $controller.Name
+                                    $this.disconnectedDisplays += $controller.Name
                                 }
                             }
                         }
 
                         # Fallback: Use Get-Display if available (Windows 10+)
-                        if ($connectedDisplays.Count -eq 0) {
+                        if ($this.connectedDisplays.Count -eq 0) {
                             try {
-                                $displays = Get-Display -ErrorAction Stop
-                                $connectedDisplays = $displays | ForEach-Object { "Display$($_.Index)" }
+                                $this.displays = Get-Display -ea Stop
+                                $this.connectedDisplays = $this.displays | ForEach-Object { "Display$($_.Index)" }
                             } catch {
                                 # Final fallback: assume at least one display
-                                $connectedDisplays = @("Primary")
+                                $this.connectedDisplays = @("Primary")
                             }
                         }
-
-                        $this.ConnectedDisplays = $connectedDisplays
-                        $this.DisconnectedDisplays = $disconnectedDisplays
-                        $this.Displays = $this.ConnectedDisplays
+                        $this.Displays = $this.ConnectedDisplays + $this.DisconnectedDisplays
                         $this.DisplayCount = $this.Displays.Count
                     }
                     catch {
@@ -149,7 +147,7 @@ class resx {
                         $xrandrOutput = & xrandr
                         $this.DisconnectedDisplays = $xrandrOutput | Where-Object { $_ -match '\sdisconnected' } | ForEach-Object { ($_ -split '\s+')[0] }
                         $this.ConnectedDisplays = $xrandrOutput | Where-Object { $_ -match '\sconnected' -and $_ -notmatch '\sdisconnected' } | ForEach-Object { ($_ -split '\s+')[0] }
-                        $this.Displays = $this.ConnectedDisplays
+                        $this.Displays = $this.ConnectedDisplays + $this.DisconnectedDisplays
                         $this.DisplayCount = $this.Displays.Count
                     }
                     catch {
@@ -166,7 +164,7 @@ class resx {
                 }
             }
 
-            $this.Log("Detected $($this.DisplayCount) connected displays: $($this.Displays -join ' ')")
+            $this.Log("Detected $($this.DisplayCount) displays: $($this.Displays -join ' ')")
             $this.Log("Detected disconnected displays: $($this.DisconnectedDisplays -join ' ')")
         }
         catch {
@@ -187,7 +185,7 @@ class resx {
                 $this.Log("Restarting Windows Explorer")
                 try {
                     # Restart explorer.exe to refresh display settings
-                    Stop-Process -Name "explorer" -Force -ErrorAction SilentlyContinue
+                    Stop-Process -Name "explorer" -Force -ea SilentlyContinue
                     Start-Sleep -Seconds 2
                     Start-Process "explorer.exe"
                 } catch {
@@ -255,6 +253,7 @@ class resx {
 
     # Get available resolutions for a display (explicit platform)
     hidden [string[]] GetResolutions([Platform]$Platform, [string] $Display) {
+        $res = @()
         switch ($Platform) {
             "Windows" {
                 try {
@@ -271,12 +270,13 @@ class resx {
                     )
 
                     # Filter to reasonable resolutions (could be enhanced with actual hardware query)
-                    return $commonResolutions
+                    $res = $commonResolutions
                 }
                 catch {
                     $this.Log("Failed to get Windows resolutions: $($_.Exception.Message)")
-                    return @("1920x1080", "1366x768", "1280x720")
-                }
+                    $res = @("1920x1080", "1366x768", "1280x720")
+                };
+                break
             }
             "Linux" {
                 try {
@@ -294,18 +294,20 @@ class resx {
                             break
                         }
                     }
-                    return ($modes | Sort-Object -Unique)
+                    $res = ($modes | Sort-Object -Unique)
                 }
                 catch {
                     $this.Log("Failed to get Linux resolutions: $($_.Exception.Message)")
-                    return @("1920x1080", "1366x768", "1280x720")
+                    $res = @("1920x1080", "1366x768", "1280x720")
                 }
+                break
             }
             default {
                 $this.Log("Resolution detection not supported on $Platform")
-                return @("1920x1080", "1366x768", "1280x720") # Common fallback resolutions
+                $res = @("1920x1080", "1366x768", "1280x720") # Common fallback resolutions
             }
         }
+        return $res
     }
 
     # Create dynamic menu options
@@ -600,12 +602,12 @@ class resx {
 
     # Selection menu (explicit platform)
     hidden [string] ShowSelectionMenu([Platform]$Platform, [string[]] $options, [string] $prompt) {
+        $selected = ''
         switch ($Platform) {
             "Windows" {
                 # Use Out-GridView for Windows selection
                 try {
                     $selected = $options | Out-GridView -Title $prompt -OutputMode Single
-                    return $selected
                 } catch {
                     # Fallback to console selection
                     Write-Host $prompt -ForegroundColor Cyan
@@ -614,17 +616,15 @@ class resx {
                     }
                     $choice = Read-Host "Enter selection number (1-$($options.Count))"
                     if ($choice -match '^\d+$' -and [int]$choice -ge 1 -and [int]$choice -le $options.Count) {
-                        return $options[[int]$choice - 1]
+                        $selected = $options[[int]$choice - 1]
                     }
-                    return $null
                 }
             }
             "Linux" {
                 # Use rofi for Linux selection
                 try {
                     $optionStr = $options -join "`n"
-                    $chosen = $optionStr | rofi -dmenu -p $prompt
-                    return $chosen
+                    $selected = $optionStr | rofi -dmenu -p $prompt
                 } catch {
                     # Fallback to console selection
                     Write-Host $prompt -ForegroundColor Cyan
@@ -633,9 +633,8 @@ class resx {
                     }
                     $choice = Read-Host "Enter selection number (1-$($options.Count))"
                     if ($choice -match '^\d+$' -and [int]$choice -ge 1 -and [int]$choice -le $options.Count) {
-                        return $options[[int]$choice - 1]
+                        $selected = $options[[int]$choice - 1]
                     }
-                    return $null
                 }
             }
             default {
@@ -646,11 +645,11 @@ class resx {
                 }
                 $choice = Read-Host "Enter selection number (1-$($options.Count))"
                 if ($choice -match '^\d+$' -and [int]$choice -ge 1 -and [int]$choice -le $options.Count) {
-                    return $options[[int]$choice - 1]
+                    $selected = $options[[int]$choice - 1]
                 }
-                return $null
             }
         }
+        return $selected
     }
 
     # Main entry point (cross-platform)
@@ -753,8 +752,8 @@ $MyInvocation.MyCommand.ScriptBlock.Module.OnRemove = {
 }.GetNewClosure();
 
 $scripts = @();
-$Public = Get-ChildItem "$PSScriptRoot/Public" -Filter "*.ps1" -Recurse -ErrorAction SilentlyContinue
-$scripts += Get-ChildItem "$PSScriptRoot/Private" -Filter "*.ps1" -Recurse -ErrorAction SilentlyContinue
+$Public = Get-ChildItem "$PSScriptRoot/Public" -Filter "*.ps1" -Recurse -ea SilentlyContinue
+$scripts += Get-ChildItem "$PSScriptRoot/Private" -Filter "*.ps1" -Recurse -ea SilentlyContinue
 $scripts += $Public
 
 foreach ($file in $scripts) {
