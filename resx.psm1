@@ -91,22 +91,78 @@ class resx {
         Add-Content -Path ([resx]::LogFile) -Value $logEntry
     }
 
-    # Detect connected and disconnected displays (cross-platform)
+    # Detect connected and disconnected displays (auto-detects platform)
     hidden [void] DetectDisplays() {
+        $this.DetectDisplays([resx]::CurrentPlatform)
+    }
+
+    # Detect connected and disconnected displays (explicit platform)
+    hidden [void] DetectDisplays([Platform]$Platform) {
         try {
-            switch ([resx]::CurrentPlatform) {
+            switch ($Platform) {
                 "Windows" {
-                    $this.DetectDisplaysWindows()
+                    try {
+                        # Get all monitors from WMI
+                        $monitors = Get-CimInstance -ClassName Win32_DesktopMonitor -ErrorAction Stop
+                        $videoControllers = Get-CimInstance -ClassName Win32_VideoController -ErrorAction Stop
+
+                        $connectedDisplays = @()
+                        $disconnectedDisplays = @()
+
+                        foreach ($controller in $videoControllers) {
+                            if ($controller.Name -and $controller.Name -ne "Microsoft Basic Display Adapter") {
+                                if ($controller.Availability -eq 3) { # Available/enabled
+                                    $connectedDisplays += $controller.Name
+                                } else {
+                                    $disconnectedDisplays += $controller.Name
+                                }
+                            }
+                        }
+
+                        # Fallback: Use Get-Display if available (Windows 10+)
+                        if ($connectedDisplays.Count -eq 0) {
+                            try {
+                                $displays = Get-Display -ErrorAction Stop
+                                $connectedDisplays = $displays | ForEach-Object { "Display$($_.Index)" }
+                            } catch {
+                                # Final fallback: assume at least one display
+                                $connectedDisplays = @("Primary")
+                            }
+                        }
+
+                        $this.ConnectedDisplays = $connectedDisplays
+                        $this.DisconnectedDisplays = $disconnectedDisplays
+                        $this.Displays = $this.ConnectedDisplays
+                        $this.DisplayCount = $this.Displays.Count
+                    }
+                    catch {
+                        $this.Log("Windows display detection failed: $($_.Exception.Message)")
+                        # Fallback to single display assumption
+                        $this.ConnectedDisplays = @("Primary")
+                        $this.DisconnectedDisplays = @()
+                        $this.Displays = $this.ConnectedDisplays
+                        $this.DisplayCount = 1
+                    }
                 }
                 "Linux" {
-                    $this.DetectDisplaysLinux()
+                    try {
+                        $xrandrOutput = & xrandr
+                        $this.DisconnectedDisplays = $xrandrOutput | Where-Object { $_ -match '\sdisconnected' } | ForEach-Object { ($_ -split '\s+')[0] }
+                        $this.ConnectedDisplays = $xrandrOutput | Where-Object { $_ -match '\sconnected' -and $_ -notmatch '\sdisconnected' } | ForEach-Object { ($_ -split '\s+')[0] }
+                        $this.Displays = $this.ConnectedDisplays
+                        $this.DisplayCount = $this.Displays.Count
+                    }
+                    catch {
+                        $this.Log("Linux display detection failed: $($_.Exception.Message)")
+                        throw "Failed to run xrandr. Is it installed?"
+                    }
                 }
                 "MacOS" {
                     $this.Log("MacOS display detection not yet implemented")
                     throw "MacOS platform not yet supported"
                 }
                 default {
-                    throw "Unsupported platform: $([resx]::CurrentPlatform)"
+                    throw "Unsupported platform: $Platform"
                 }
             }
 
@@ -116,67 +172,6 @@ class resx {
         catch {
             $this.Log("Error detecting displays: $($_.Exception.Message)")
             throw $_
-        }
-    }
-
-    # Windows display detection using WMI
-    hidden [void] DetectDisplaysWindows() {
-        try {
-            # Get all monitors from WMI
-            $monitors = Get-CimInstance -ClassName Win32_DesktopMonitor -ErrorAction Stop
-            $videoControllers = Get-CimInstance -ClassName Win32_VideoController -ErrorAction Stop
-
-            $connectedDisplays = @()
-            $disconnectedDisplays = @()
-
-            foreach ($controller in $videoControllers) {
-                if ($controller.Name -and $controller.Name -ne "Microsoft Basic Display Adapter") {
-                    if ($controller.Availability -eq 3) { # Available/enabled
-                        $connectedDisplays += $controller.Name
-                    } else {
-                        $disconnectedDisplays += $controller.Name
-                    }
-                }
-            }
-
-            # Fallback: Use Get-Display if available (Windows 10+)
-            if ($connectedDisplays.Count -eq 0) {
-                try {
-                    $displays = Get-Display -ErrorAction Stop
-                    $connectedDisplays = $displays | ForEach-Object { "Display$($_.Index)" }
-                } catch {
-                    # Final fallback: assume at least one display
-                    $connectedDisplays = @("Primary")
-                }
-            }
-
-            $this.ConnectedDisplays = $connectedDisplays
-            $this.DisconnectedDisplays = $disconnectedDisplays
-            $this.Displays = $this.ConnectedDisplays
-            $this.DisplayCount = $this.Displays.Count
-        }
-        catch {
-            $this.Log("Windows display detection failed: $($_.Exception.Message)")
-            # Fallback to single display assumption
-            $this.ConnectedDisplays = @("Primary")
-            $this.DisconnectedDisplays = @()
-            $this.Displays = $this.ConnectedDisplays
-            $this.DisplayCount = 1
-        }
-    }
-
-    # Linux display detection using xrandr
-    hidden [void] DetectDisplaysLinux() {
-        try {
-            $xrandrOutput = & xrandr
-            $this.DisconnectedDisplays = $xrandrOutput | Where-Object { $_ -match '\sdisconnected' } | ForEach-Object { ($_ -split '\s+')[0] }
-            $this.ConnectedDisplays = $xrandrOutput | Where-Object { $_ -match '\sconnected' -and $_ -notmatch '\sdisconnected' } | ForEach-Object { ($_ -split '\s+')[0] }
-            $this.Displays = $this.ConnectedDisplays
-            $this.DisplayCount = $this.Displays.Count
-        }
-        catch {
-            $this.Log("Linux display detection failed: $($_.Exception.Message)")
-            throw "Failed to run xrandr. Is it installed?"
         }
     }
 
@@ -224,9 +219,14 @@ class resx {
         }
     }
 
-    # Turn off disconnected displays (cross-platform)
+    # Turn off disconnected displays (auto-detects platform)
     hidden [void] TurnOffDisconnected() {
-        switch ([resx]::CurrentPlatform) {
+        $this.TurnOffDisconnected([resx]::CurrentPlatform)
+    }
+
+    # Turn off disconnected displays (explicit platform)
+    hidden [void] TurnOffDisconnected([Platform]$Platform) {
+        switch ($Platform) {
             "Windows" {
                 # Windows handles disconnected displays automatically
                 $this.Log("Windows automatically manages disconnected displays")
@@ -242,73 +242,68 @@ class resx {
                 }
             }
             default {
-                $this.Log("Display management not supported on $([resx]::CurrentPlatform)")
+                $this.Log("Display management not supported on $Platform")
             }
         }
     }
 
-    # Get available resolutions for a display (cross-platform)
+    # Get available resolutions for a display (auto-detects platform)
     hidden [string[]] GetResolutions([string] $Display) {
-        switch ([resx]::CurrentPlatform) {
+        return $this.GetResolutions([resx]::CurrentPlatform, $Display)
+    }
+
+    # Get available resolutions for a display (explicit platform)
+    hidden [string[]] GetResolutions([Platform]$Platform, [string] $Display) {
+        switch ($Platform) {
             "Windows" {
-                return $this.GetResolutionsWindows($Display)
+                try {
+                    # Get current display modes from WMI
+                    $videoModes = Get-CimInstance -ClassName Win32_VideoController |
+                        Where-Object { $_.Name -like "*$Display*" -or $Display -eq "Primary" } |
+                        Select-Object -First 1 |
+                        ForEach-Object { $_.VideoModeDescription }
+
+                    # Try to get available modes from registry or use common resolutions
+                    $commonResolutions = @(
+                        "3840x2160", "2560x1440", "1920x1080", "1680x1050",
+                        "1600x900", "1366x768", "1280x1024", "1280x720", "1024x768"
+                    )
+
+                    # Filter to reasonable resolutions (could be enhanced with actual hardware query)
+                    return $commonResolutions
+                }
+                catch {
+                    $this.Log("Failed to get Windows resolutions: $($_.Exception.Message)")
+                    return @("1920x1080", "1366x768", "1280x720")
+                }
             }
             "Linux" {
-                return $this.GetResolutionsLinux($Display)
+                try {
+                    $output = & xrandr --query
+                    $start = $false
+                    $modes = @()
+                    foreach ($line in $output) {
+                        if ($line -match "^$Display connected") { $start = $true; continue }
+                        if ($start -and $line -match '^\s') {
+                            if ($line -match '\d+x\d+') {
+                                $modes += [regex]::Matches($line, '\d+x\d+').Value
+                            }
+                        }
+                        elseif ($start -and $line -notmatch '^\s') {
+                            break
+                        }
+                    }
+                    return ($modes | Sort-Object -Unique)
+                }
+                catch {
+                    $this.Log("Failed to get Linux resolutions: $($_.Exception.Message)")
+                    return @("1920x1080", "1366x768", "1280x720")
+                }
             }
             default {
-                $this.Log("Resolution detection not supported on $([resx]::CurrentPlatform)")
+                $this.Log("Resolution detection not supported on $Platform")
                 return @("1920x1080", "1366x768", "1280x720") # Common fallback resolutions
             }
-        }
-    }
-
-    # Get Windows resolutions using WMI and registry
-    hidden [string[]] GetResolutionsWindows([string] $Display) {
-        try {
-            # Get current display modes from WMI
-            $videoModes = Get-CimInstance -ClassName Win32_VideoController |
-                Where-Object { $_.Name -like "*$Display*" -or $Display -eq "Primary" } |
-                Select-Object -First 1 |
-                ForEach-Object { $_.VideoModeDescription }
-
-            # Try to get available modes from registry or use common resolutions
-            $commonResolutions = @(
-                "3840x2160", "2560x1440", "1920x1080", "1680x1050",
-                "1600x900", "1366x768", "1280x1024", "1280x720", "1024x768"
-            )
-
-            # Filter to reasonable resolutions (could be enhanced with actual hardware query)
-            return $commonResolutions
-        }
-        catch {
-            $this.Log("Failed to get Windows resolutions: $($_.Exception.Message)")
-            return @("1920x1080", "1366x768", "1280x720")
-        }
-    }
-
-    # Get Linux resolutions using xrandr
-    hidden [string[]] GetResolutionsLinux([string]$Display) {
-        try {
-            $output = & xrandr --query
-            $start = $false
-            $modes = @()
-            foreach ($line in $output) {
-                if ($line -match "^$Display connected") { $start = $true; continue }
-                if ($start -and $line -match '^\s') {
-                    if ($line -match '\d+x\d+') {
-                        $modes += [regex]::Matches($line, '\d+x\d+').Value
-                    }
-                }
-                elseif ($start -and $line -notmatch '^\s') {
-                    break
-                }
-            }
-            return ($modes | Sort-Object -Unique)
-        }
-        catch {
-            $this.Log("Failed to get Linux resolutions: $($_.Exception.Message)")
-            return @("1920x1080", "1366x768", "1280x720")
         }
     }
 
@@ -379,9 +374,14 @@ class resx {
         $this.RestartDE()
     }
 
-    # Cross-platform extend displays
+    # Extend displays (auto-detects platform)
     hidden [void] ExtendDisplays() {
-        switch ([resx]::CurrentPlatform) {
+        $this.ExtendDisplays([resx]::CurrentPlatform)
+    }
+
+    # Extend displays (explicit platform)
+    hidden [void] ExtendDisplays([Platform]$Platform) {
+        switch ($Platform) {
             "Windows" {
                 $this.Log("Extending displays on Windows")
                 try {
@@ -408,14 +408,19 @@ class resx {
                 }
             }
             default {
-                $this.Log("Extend displays not supported on $([resx]::CurrentPlatform)")
+                $this.Log("Extend displays not supported on $Platform")
             }
         }
     }
 
-    # Cross-platform mirror displays
+    # Mirror displays (auto-detects platform)
     hidden [void] MirrorDisplays() {
-        switch ([resx]::CurrentPlatform) {
+        $this.MirrorDisplays([resx]::CurrentPlatform)
+    }
+
+    # Mirror displays (explicit platform)
+    hidden [void] MirrorDisplays([Platform]$Platform) {
+        switch ($Platform) {
             "Windows" {
                 $this.Log("Mirroring displays on Windows")
                 try {
@@ -439,14 +444,19 @@ class resx {
                 }
             }
             default {
-                $this.Log("Mirror displays not supported on $([resx]::CurrentPlatform)")
+                $this.Log("Mirror displays not supported on $Platform")
             }
         }
     }
 
-    # Cross-platform show only display
+    # Show only display (auto-detects platform)
     hidden [void] ShowOnlyDisplay([string] $selectedDisplay) {
-        switch ([resx]::CurrentPlatform) {
+        $this.ShowOnlyDisplay([resx]::CurrentPlatform, $selectedDisplay)
+    }
+
+    # Show only display (explicit platform)
+    hidden [void] ShowOnlyDisplay([Platform]$Platform, [string] $selectedDisplay) {
+        switch ($Platform) {
             "Windows" {
                 $this.Log("Setting single display on Windows: $selectedDisplay")
                 try {
@@ -471,7 +481,7 @@ class resx {
                 }
             }
             default {
-                $this.Log("Single display mode not supported on $([resx]::CurrentPlatform)")
+                $this.Log("Single display mode not supported on $Platform")
             }
         }
     }
@@ -582,9 +592,14 @@ class resx {
         }
     }
 
-    # Cross-platform selection menu
+    # Selection menu (auto-detects platform)
     hidden [string] ShowSelectionMenu([string[]] $options, [string] $prompt) {
-        switch ([resx]::CurrentPlatform) {
+        return $this.ShowSelectionMenu([resx]::CurrentPlatform, $options, $prompt)
+    }
+
+    # Selection menu (explicit platform)
+    hidden [string] ShowSelectionMenu([Platform]$Platform, [string[]] $options, [string] $prompt) {
+        switch ($Platform) {
             "Windows" {
                 # Use Out-GridView for Windows selection
                 try {
