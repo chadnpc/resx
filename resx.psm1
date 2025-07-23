@@ -31,16 +31,15 @@ class resx {
 
     # Initialize log directory
     hidden [void] InitLogging() {
-        $logDir = [resx]::LogDir
-        if (-not (Test-Path $logDir)) {
-            New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+        if (-not (Test-Path ([resx]::LogDir))) {
+            New-Item -ItemType Directory -Path ([resx]::LogDir) -Force | Out-Null
         }
     }
 
     # Log a message with timestamp
-    hidden [void] Log([string] $Message) {
+    hidden [void] Log([string]$Message) {
         $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-        $logEntry = "$timestamp: $Message"
+        $logEntry = "$timestamp : $Message"
         Add-Content -Path [resx]::LogFile -Value $logEntry
     }
 
