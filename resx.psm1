@@ -247,7 +247,7 @@ class resx {
     }
 
     # Get available resolutions for a display (auto-detects platform)
-    hidden [string[]] GetResolutions([string] $Display) {
+    hidden [string[]] GetResolutions([string]$Display) {
         return $this.GetResolutions([resx]::CurrentPlatform, $Display)
     }
 
