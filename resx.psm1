@@ -13,7 +13,7 @@
 #>
 class resx {
     # Static properties
-    static [string] $LogDir = "$env:USERPROFILE/.local/share/resx"
+    static [string] $LogDir = "$env:HOME/.local/share/resx"
     static [string] $LogFile = "$([resx]::LogDir)/resx.log"
 
     # Hidden internal properties
