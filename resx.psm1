@@ -1,7 +1,11 @@
 ﻿#!/usr/bin/env pwsh
 #region    Classes
+enum DE {
+  I3
+  BspWM
+  Sway
+}
 # Main class
-
 <#
 .EXAMPLE
   # Create instance and run
@@ -31,7 +35,7 @@ class resx {
 
     # Initialize log directory
     hidden [void] InitLogging() {
-        if (-not (Test-Path ([resx]::LogDir))) {
+        if (![IO.Directory]::exists([resx]::LogDir)) {
             New-Item -ItemType Directory -Path ([resx]::LogDir) -Force | Out-Null
         }
     }
@@ -40,7 +44,7 @@ class resx {
     hidden [void] Log([string]$Message) {
         $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
         $logEntry = "$timestamp : $Message"
-        Add-Content -Path [resx]::LogFile -Value $logEntry
+        Add-Content -Path ([resx]::LogFile) -Value $logEntry
     }
 
     # Detect connected and disconnected displays
@@ -61,10 +65,19 @@ class resx {
         }
     }
 
-    # Restart i3
-    hidden [void] RestartI3() {
+    hidden [void] RestartDE() {
+      $this.RestartDE("BspWM")
+    }
+    # Restart DE: EXAMPLE :i3, BSPWM, SWAY ...
+    hidden [void] RestartDE([DE]$name) {
         $this.Log("Restarting i3")
-        i3-msg restart
+        switch ($name) {
+          "I3" { i3-msg restart; break }
+          "BspWM" { bspc wm -r; break }
+          "Sway" { swaymsg exit; break }
+          Default {}
+        }
+
     }
 
     # Turn off disconnected displays
@@ -181,7 +194,7 @@ class resx {
 
             "Custom layout" {
                 $primary = $this.Displays -join "`n" | rofi -dmenu -p "Select primary display"
-                if (-not $primary) { return }
+                if (!$primary) { return }
 
                 $cmd = "xrandr --output `"$primary`" --auto --primary"
                 $this.Log("Selected primary display: $primary")
@@ -209,7 +222,7 @@ class resx {
 
         # Finalize
         $this.TurnOffDisconnected()
-        $this.RestartI3()
+        $this.RestartDE()
     }
 
     # Main entry point
@@ -218,7 +231,7 @@ class resx {
             $this.Log("Only one display detected: $($this.Displays[0])")
             xrandr --output $this.Displays[0] --auto --primary
             $this.TurnOffDisconnected()
-            $this.RestartI3()
+            $this.RestartDE()
         }
         else {
             $options = $this.CreateOptions()
