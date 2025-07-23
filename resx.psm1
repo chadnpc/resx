@@ -175,13 +175,14 @@ class resx {
         }
     }
 
+    # Restart DE/Explorer (auto-detects platform)
     hidden [void] RestartDE() {
-        $this.RestartDE("BspWM")
+        $this.RestartDE([resx]::CurrentPlatform, "BspWM")
     }
 
-    # Restart DE/Explorer (cross-platform)
-    hidden [void] RestartDE([DE]$name) {
-        switch ([resx]::CurrentPlatform) {
+    # Restart DE/Explorer (explicit platform)
+    hidden [void] RestartDE([Platform]$Platform, [DE]$name) {
+        switch ($Platform) {
             "Windows" {
                 $this.Log("Restarting Windows Explorer")
                 try {
@@ -214,7 +215,7 @@ class resx {
                 }
             }
             default {
-                $this.Log("DE restart not supported on $([resx]::CurrentPlatform)")
+                $this.Log("DE restart not supported on $Platform")
             }
         }
     }
