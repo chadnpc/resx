@@ -531,6 +531,7 @@ class resx {
         "Linux" {
           $this.Log("Setting resolution of $selectedDisplay to $resolution")
           try {
+            # example: xrandr --output VGA1 --mode "1440x900_60.00"
             xrandr --output $selectedDisplay --mode $resolution
           } catch {
             $this.Log("Failed to set resolution: $($_.Exception.Message)")
